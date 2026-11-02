@@ -1,0 +1,16 @@
+[project]
+name = "logtriage"
+version = "1.0.0"
+description = "Triage structured JSON logs into an incident timeline and RCA draft (stdlib only)"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+logtriage = "logtriage.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["logtriage"]

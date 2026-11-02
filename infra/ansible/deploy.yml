@@ -1,0 +1,12 @@
+---
+# Repeatable VM deployment of the OpsBridge stack with Docker Compose.
+#   ansible-playbook deploy.yml --ask-vault-pass                  # deploy / converge
+#   ansible-playbook deploy.yml --check --diff                    # dry run: what would change
+#   ansible-playbook deploy.yml -e opsbridge_image_tag=<previous> # rollback = redeploy the previous tag
+- name: Deploy OpsBridge
+  hosts: opsbridge
+  become: true
+  serial: 1 # one host at a time: a bad release never takes the whole fleet down
+  max_fail_percentage: 0
+  roles:
+    - opsbridge

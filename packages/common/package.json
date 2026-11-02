@@ -1,0 +1,10 @@
+{
+  "name": "@opsbridge/common",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": "./src/index.js",
+  "dependencies": {
+    "prom-client": "^15.1.3"
+  }
+}

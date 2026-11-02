@@ -1,0 +1,64 @@
+---
+- name: Install Docker engine and compose plugin
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2, curl, python3-docker]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure Docker is running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Create application directory
+  ansible.builtin.file:
+    path: "{{ opsbridge_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Render compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ opsbridge_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+    validate: docker compose -f %s config -q
+  notify: Restart stack
+
+- name: Render environment file with secrets
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ opsbridge_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600" # secrets: readable by root only
+  no_log: true
+  notify: Restart stack
+
+- name: Pull images and start the stack
+  ansible.builtin.command:
+    cmd: docker compose up -d --pull always --wait --wait-timeout 180
+    chdir: "{{ opsbridge_dir }}"
+  register: compose_up
+  changed_when: "'Started' in compose_up.stderr or 'Recreated' in compose_up.stderr or 'Created' in compose_up.stderr"
+
+- name: Verify the gateway is healthy (change readiness gate)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ opsbridge_public_port }}/readyz"
+    status_code: 200
+  register: ready
+  retries: 12
+  delay: 5
+  until: ready.status == 200
+  changed_when: false
+
+- name: Verify unauthenticated access is denied
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ opsbridge_public_port }}/incidents"
+    status_code: 401
+  changed_when: false

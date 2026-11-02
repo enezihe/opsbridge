@@ -1,0 +1,26 @@
+# Overlay: Keycloak issues the tokens, the gateway enforces RBAC from realm roles, the API trusts the gateway.
+#   docker compose -f docker-compose.yml -f docker-compose.keycloak.yml up -d --build
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev --import-realm
+    environment:
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN:-kcadmin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-kcadmin-dev-only}
+    ports: ["8081:8080"]
+    volumes: ["./infra/keycloak/opsbridge-realm.json:/opt/keycloak/data/import/opsbridge-realm.json:ro"]
+
+  api:
+    environment:
+      AUTH_MODE: gateway
+
+  gateway:
+    environment:
+      AUTH_MODE: keycloak
+      # `iss` is what browsers/CLIs see (localhost:8081); keys are fetched over the internal network.
+      KEYCLOAK_ISSUER: http://localhost:8081/realms/opsbridge
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/opsbridge/protocol/openid-connect/certs
+    depends_on: [keycloak]

@@ -1,0 +1,92 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: npm ci
+      - run: npm test
+      - name: logtriage tests
+        run: python -m unittest discover -s tests
+        working-directory: tools/logtriage
+      - run: npm audit --omit=dev --audit-level=high
+
+  iac:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt + validate
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+      - name: Bicep build
+        run: az bicep build --file infra/bicep/main.bicep --stdout > /dev/null
+      - name: Ansible syntax check
+        run: |
+          pip install ansible-core
+          printf 'vault_jwt_secret: x\nvault_internal_key: y\n' > /tmp/v.yml
+          cd infra/ansible && ansible-playbook deploy.yml --syntax-check -e @/tmp/v.yml
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the full stack (gateway, api, worker, mongo, kafka)
+        run: docker compose up -d --build --wait
+      - run: docker compose exec -T api node services/api/src/seed.js
+      - name: Smoke test
+        run: python3 tools/smoke_test.py --base-url http://localhost:8080
+      - name: Collect logs
+        if: always()
+        run: docker compose logs --no-log-prefix > stack.log
+      - name: "Triage report (gate - no error spike during the run)"
+        if: always()
+        run: PYTHONPATH=tools/logtriage python3 -m logtriage analyze stack.log --service api --fail-on-spike
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: stack-logs, path: stack.log }
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [test, iac, e2e]
+    if: github.ref == 'refs/heads/main'
+    permissions: { contents: read, id-token: write }
+    strategy:
+      matrix: { service: [api, gateway, worker] }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t "opsbridge-${{ matrix.service }}:${{ github.sha }}" .
+      - name: Scan image (Trivy, fail on fixable CRITICAL)
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL --ignore-unfixed "opsbridge-${{ matrix.service }}:${{ github.sha }}"
+      # Push only when an Azure registry is configured (repository variables set).
+      - name: Azure login
+        if: vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Push to ACR
+        if: vars.AZURE_CLIENT_ID != ''
+        run: |
+          IMAGE=${{ vars.ACR_NAME }}.azurecr.io/opsbridge-${{ matrix.service }}:${{ github.sha }}
+          az acr login --name ${{ vars.ACR_NAME }}
+          docker tag "opsbridge-${{ matrix.service }}:${{ github.sha }}" "$IMAGE"
+          docker push "$IMAGE"
