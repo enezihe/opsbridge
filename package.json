@@ -1,0 +1,12 @@
+{
+  "name": "opsbridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": ["packages/*", "services/*"],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "lint": "node --check packages/common/src/index.js"
+  },
+  "engines": { "node": ">=20" }
+}

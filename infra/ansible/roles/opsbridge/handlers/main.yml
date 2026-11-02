@@ -1,0 +1,6 @@
+---
+- name: Restart stack
+  ansible.builtin.command:
+    cmd: docker compose up -d --force-recreate --wait
+    chdir: "{{ opsbridge_dir }}"
+  changed_when: true

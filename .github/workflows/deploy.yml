@@ -1,0 +1,50 @@
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment: { type: choice, options: [dev, prod], default: dev }
+      image_tag: { description: "Image tag (git SHA). Use a previous SHA to roll back.", required: true }
+
+permissions: { contents: read, id-token: write }
+
+concurrency: deploy-${{ inputs.environment }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-plan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: azure/login@v2
+        with: { client-id: "${{ vars.AZURE_CLIENT_ID }}", tenant-id: "${{ vars.AZURE_TENANT_ID }}", subscription-id: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - working-directory: infra/terraform
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+        run: |
+          terraform init -backend-config=envs/${{ inputs.environment }}.backend.hcl
+          terraform plan -var-file=envs/${{ inputs.environment }}.tfvars -var image_tag=${{ inputs.image_tag }} -out=tfplan
+      - uses: actions/upload-artifact@v4
+        with: { name: tfplan, path: infra/terraform/tfplan }
+
+  apply:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # required reviewers configured here = change approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/download-artifact@v4
+        with: { name: tfplan, path: infra/terraform }
+      - uses: azure/login@v2
+        with: { client-id: "${{ vars.AZURE_CLIENT_ID }}", tenant-id: "${{ vars.AZURE_TENANT_ID }}", subscription-id: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - id: tf
+        working-directory: infra/terraform
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+        run: |
+          terraform init -backend-config=envs/${{ inputs.environment }}.backend.hcl
+          terraform apply tfplan
+          echo "url=$(terraform output -raw gateway_url)" >> "$GITHUB_OUTPUT"
+      - name: Post-deploy smoke test (fails the release if unhealthy)
+        env:
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: python3 tools/smoke_test.py --base-url "${{ steps.tf.outputs.url }}" --event-timeout 60

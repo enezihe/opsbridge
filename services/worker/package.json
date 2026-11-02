@@ -1,0 +1,18 @@
+{
+  "name": "@opsbridge/worker",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@opsbridge/common": "*",
+    "kafkajs": "^2.2.4",
+    "mongoose": "^8.9.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.4"
+  }
+}

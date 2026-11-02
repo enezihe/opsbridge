@@ -1,0 +1,11 @@
+opsbridge_dir: /opt/opsbridge
+opsbridge_registry: opsbridgedev.azurecr.io
+opsbridge_image_tag: latest
+opsbridge_public_port: 8080
+opsbridge_auth_rate_limit: 10
+
+# Secrets are never stored in this file. Put them in group_vars/all/vault.yml and encrypt it:
+#   ansible-vault encrypt group_vars/all/vault.yml
+# Required keys: vault_jwt_secret, vault_internal_key
+opsbridge_jwt_secret: "{{ vault_jwt_secret }}"
+opsbridge_internal_key: "{{ vault_internal_key }}"

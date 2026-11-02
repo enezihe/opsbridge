@@ -1,0 +1,15 @@
+{
+  "name": "@opsbridge/gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@opsbridge/common": "*",
+    "express": "^5.1.0",
+    "jose": "^5.9.6"
+  }
+}

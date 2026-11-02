@@ -1,0 +1,61 @@
+# GitLab CI equivalent. Copy to the repository root as .gitlab-ci.yml.
+stages: [test, e2e, build, deploy]
+
+default:
+  interruptible: true
+
+node-tests:
+  stage: test
+  image: node:22
+  cache: { key: { files: [package-lock.json] }, paths: [node_modules/] }
+  script: [npm ci, npm test]
+  # Mongo binary for mongodb-memory-server is downloaded on first run.
+
+python-tests:
+  stage: test
+  image: python:3.12-slim
+  script: [cd tools/logtriage, python -m unittest discover -s tests]
+
+terraform-validate:
+  stage: test
+  image: { name: hashicorp/terraform:1.13, entrypoint: [""] }
+  script: [cd infra/terraform, terraform fmt -check -recursive, terraform init -backend=false, terraform validate]
+
+e2e-smoke:
+  stage: e2e
+  image: docker:27
+  services: [docker:27-dind]
+  variables: { DOCKER_HOST: tcp://docker:2375, DOCKER_TLS_CERTDIR: "" }
+  before_script: [apk add --no-cache python3 nodejs]
+  script:
+    - docker compose up -d --build --wait
+    - docker compose exec -T api node services/api/src/seed.js
+    - python3 tools/smoke_test.py --base-url http://docker:8080
+  after_script: [docker compose logs --no-log-prefix > stack.log]
+  artifacts: { when: always, paths: [stack.log], expire_in: 1 week }
+
+build-images:
+  stage: build
+  image: docker:27
+  services: [docker:27-dind]
+  rules: [{ if: '$CI_COMMIT_BRANCH == "main"' }]
+  parallel: { matrix: [{ SERVICE: [api, gateway, worker] }] }
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -f services/$SERVICE/Dockerfile -t "$CI_REGISTRY_IMAGE/$SERVICE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE/$SERVICE:$CI_COMMIT_SHA"
+
+deploy-dev:
+  stage: deploy
+  image: python:3.12-slim
+  environment: dev
+  rules: [{ if: '$CI_COMMIT_BRANCH == "main"' }]
+  before_script: [pip install ansible-core]
+  script:
+    - cd infra/ansible
+    - ansible-playbook deploy.yml -e opsbridge_image_tag=$CI_COMMIT_SHA -e @"$ANSIBLE_VAULT_VARS"   # ANSIBLE_VAULT_VARS: masked file variable
+
+deploy-prod:
+  extends: deploy-dev
+  environment: prod
+  when: manual   # human approval gate

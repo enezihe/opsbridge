@@ -1,0 +1,45 @@
+// Declarative pipeline. Needs Docker on the agent and credentials: 'acr-login', 'ansible-vault-vars' (file).
+pipeline {
+  agent any
+  options { timestamps(); disableConcurrentBuilds(); timeout(time: 30, unit: 'MINUTES') }
+  environment { IMAGE_TAG = "${env.GIT_COMMIT}" }
+  stages {
+    stage('Test') {
+      parallel {
+        stage('Node') { steps { sh 'npm ci && npm test' } }
+        stage('Python') { steps { dir('tools/logtriage') { sh 'python3 -m unittest discover -s tests' } } }
+        stage('IaC validate') { steps { dir('infra/terraform') { sh 'terraform fmt -check -recursive && terraform init -backend=false && terraform validate' } } }
+      }
+    }
+    stage('E2E smoke') {
+      steps {
+        sh 'docker compose up -d --build --wait'
+        sh 'docker compose exec -T api node services/api/src/seed.js'
+        sh 'python3 tools/smoke_test.py'
+      }
+      post { always { sh 'docker compose logs --no-log-prefix > stack.log || true; docker compose down -v || true'; archiveArtifacts artifacts: 'stack.log', allowEmptyArchive: true } }
+    }
+    stage('Build & push') {
+      when { branch 'main' }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'acr-login', usernameVariable: 'U', passwordVariable: 'P')]) {
+          sh '''
+            echo "$P" | docker login opsbridgedev.azurecr.io -u "$U" --password-stdin
+            for s in api gateway worker; do
+              docker build -f services/$s/Dockerfile -t opsbridgedev.azurecr.io/opsbridge-$s:$IMAGE_TAG .
+              docker push opsbridgedev.azurecr.io/opsbridge-$s:$IMAGE_TAG
+            done'''
+        }
+      }
+    }
+    stage('Deploy dev') {
+      when { branch 'main' }
+      steps {
+        withCredentials([file(credentialsId: 'ansible-vault-vars', variable: 'VARS')]) {
+          dir('infra/ansible') { sh 'ansible-playbook deploy.yml -e opsbridge_image_tag=$IMAGE_TAG -e @$VARS' }
+        }
+      }
+    }
+    stage('Approve prod') { when { branch 'main' }; steps { input message: 'Promote to production?', submitter: 'release-managers' } }
+  }
+}

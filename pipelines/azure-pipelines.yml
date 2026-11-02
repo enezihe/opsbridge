@@ -1,0 +1,85 @@
+# Azure DevOps equivalent of the GitHub Actions workflows. Service connection: "opsbridge-azure" (workload identity federation).
+trigger: { branches: { include: [main] } }
+pr: [main]
+
+variables:
+  imageTag: $(Build.SourceVersion)
+  acr: opsbridgedev
+
+stages:
+  - stage: Test
+    jobs:
+      - job: unit
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - task: NodeTool@0
+            inputs: { versionSpec: 22.x }
+          - script: npm ci && npm test
+            displayName: Node tests
+          - script: python3 -m unittest discover -s tests
+            workingDirectory: tools/logtriage
+            displayName: logtriage tests
+      - job: e2e
+        dependsOn: unit
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - script: docker compose up -d --build --wait && docker compose exec -T api node services/api/src/seed.js
+            displayName: Start stack
+          - script: python3 tools/smoke_test.py
+            displayName: Smoke test
+
+  - stage: Build
+    dependsOn: Test
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: images
+        pool: { vmImage: ubuntu-latest }
+        strategy: { matrix: { api: { svc: api }, gateway: { svc: gateway }, worker: { svc: worker } } }
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: opsbridge-azure
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(acr)
+                docker build -f services/$(svc)/Dockerfile -t $(acr).azurecr.io/opsbridge-$(svc):$(imageTag) .
+                docker push $(acr).azurecr.io/opsbridge-$(svc):$(imageTag)
+
+  - stage: DeployDev
+    dependsOn: Build
+    jobs:
+      - deployment: terraform_dev
+        environment: opsbridge-dev
+        pool: { vmImage: ubuntu-latest }
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: opsbridge-azure
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      export ARM_USE_OIDC=true ARM_CLIENT_ID=$servicePrincipalId ARM_TENANT_ID=$tenantId ARM_OIDC_TOKEN=$idToken ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+                      cd infra/terraform
+                      terraform init -backend-config=envs/dev.backend.hcl
+                      terraform apply -auto-approve -var-file=envs/dev.tfvars -var image_tag=$(imageTag)
+                - script: python3 tools/smoke_test.py --base-url "$(DEV_URL)"
+                  displayName: Post-deploy smoke test
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    jobs:
+      - deployment: terraform_prod
+        environment: opsbridge-prod   # approvals + checks configured on the environment
+        pool: { vmImage: ubuntu-latest }
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - script: echo "Same steps as dev using envs/prod.* - parameterise via a YAML template"

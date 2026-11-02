@@ -1,0 +1,97 @@
+{
+  "realm": "opsbridge",
+  "enabled": true,
+  "registrationAllowed": false,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "roles": {
+    "realm": [
+      {
+        "name": "viewer",
+        "description": "Read incidents"
+      },
+      {
+        "name": "engineer",
+        "description": "Create and update incidents"
+      },
+      {
+        "name": "admin",
+        "description": "Delete incidents, chaos controls"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "opsbridge-cli",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@opsbridge.local",
+      "email": "admin@opsbridge.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ChangeMe!12345",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin"
+      ]
+    },
+    {
+      "username": "engineer@opsbridge.local",
+      "email": "engineer@opsbridge.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Engineer",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ChangeMe!12345",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "engineer"
+      ]
+    },
+    {
+      "username": "viewer@opsbridge.local",
+      "email": "viewer@opsbridge.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Viewer",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ChangeMe!12345",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "viewer"
+      ]
+    }
+  ]
+}
